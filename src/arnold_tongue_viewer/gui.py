@@ -12,7 +12,7 @@ import numpy as np
 from PIL import Image, ImageTk
 
 from .core import HAS_NUMBA, CircleMapSettings
-from .export import save_image
+from .export import save_image, suggested_filename
 from .locking import colorize_locking, locking_field
 from .palettes import PALETTES
 from .render import Viewport, render_rgb
@@ -254,8 +254,23 @@ class ArnoldViewer:
 
     def _export_image(self) -> None:
         """Export the current view using the actual viewport and display mode."""
+        view, settings = self.view, self.settings
+        palette, gamma = self.palette.get(), self.gamma.get()
+        display_mode = self.display_mode.get()
+        filename = suggested_filename(
+            mode=display_mode,
+            palette=palette,
+            gamma=gamma,
+            transient=settings.transient,
+            samples=settings.samples,
+            omega_min=view.omega_min,
+            omega_max=view.omega_max,
+            coupling_min=view.coupling_min,
+            coupling_max=view.coupling_max,
+        )
         path = filedialog.asksaveasfilename(
             title="Export Arnold tongue image",
+            initialfile=filename,
             defaultextension=".png",
             filetypes=[("PNG image", "*.png"), ("JPEG image", "*.jpg"), ("JPEG image", "*.jpeg")],
         )

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+import re
 from pathlib import Path
 
 import numpy as np
@@ -26,3 +28,49 @@ def save_image(rgb: np.ndarray, destination: str | Path, *, jpeg_quality: int = 
     options = {"quality": jpeg_quality, "subsampling": 0} if image_format == "JPEG" else {}
     Image.fromarray(rgb, mode="RGB").save(path, format=image_format, **options)
     return path
+
+
+def suggested_filename(
+    *,
+    mode: str,
+    palette: str,
+    gamma: float,
+    transient: int,
+    samples: int,
+    omega_min: float,
+    omega_max: float,
+    coupling_min: float,
+    coupling_max: float,
+    extension: str = ".png",
+) -> str:
+    """Return a portable, reproducible export name based on rendering settings."""
+    if extension.lower() not in SUPPORTED_FORMATS:
+        raise ValueError("Unsupported image extension")
+    values = (gamma, omega_min, omega_max, coupling_min, coupling_max)
+    if not all(math.isfinite(v) for v in values):
+        raise ValueError("Filename parameters must be finite")
+    if transient < 0 or samples < 1 or omega_min >= omega_max or coupling_min >= coupling_max:
+        raise ValueError("Invalid rendering parameters")
+
+    def slug(value: str) -> str:
+        cleaned = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+        if not cleaned:
+            raise ValueError("Mode and palette must have a name")
+        return cleaned
+
+    def number(value: float) -> str:
+        return f"{value:.4f}"
+
+    mode_slug = slug(mode)
+    fields = ["arnold", mode_slug, slug(palette)]
+    if mode_slug != "mode-locking":
+        if gamma <= 0:
+            raise ValueError("Gamma must be positive")
+        fields.append(f"g{gamma:.2f}")
+    fields += [
+        f"t{transient}",
+        f"s{samples}",
+        f"O{number(omega_min)}-{number(omega_max)}",
+        f"K{number(coupling_min)}-{number(coupling_max)}",
+    ]
+    return "_".join(fields) + extension.lower()
