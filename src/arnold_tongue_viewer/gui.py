@@ -6,7 +6,7 @@ import queue
 import tkinter as tk
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from tkinter import filedialog, messagebox, simpledialog, ttk
+from tkinter import filedialog, messagebox, ttk
 
 import numpy as np
 from PIL import Image, ImageTk
@@ -301,42 +301,78 @@ class ArnoldViewer:
 
     def _export_gif(self) -> None:
         """Export a geometric zoom into the center of the current viewport."""
-        frames = simpledialog.askinteger(
-            "GIF frames",
-            "Number of frames (2–120):",
-            parent=self.root,
-            initialvalue=24,
-            minvalue=2,
-            maxvalue=120,
-        )
-        if frames is None:
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Animation options")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        motion = tk.StringVar(value="Smooth Zoom")
+        effect = tk.StringVar(value="Static")
+        second = tk.StringVar(value="Jade")
+        frames_var = tk.StringVar(value="24")
+        zoom_var = tk.StringVar(value="0.30")
+        seed_var = tk.StringVar(value="42")
+        fields = [
+            ("Motion", motion, ["Smooth Zoom", "Orbit", "Pendulum", "Random Walk"]),
+            ("Color effect", effect, ["Static", "Palette Pulse", "Negative Pulse"]),
+            ("Second palette", second, list(PALETTES)),
+        ]
+        for row, (label, var, choices) in enumerate(fields):
+            ttk.Label(dialog, text=label).grid(row=row, column=0, padx=12, pady=5, sticky="w")
+            ttk.Combobox(dialog, textvariable=var, values=choices, state="readonly", width=20).grid(
+                row=row, column=1, padx=12, pady=5
+            )
+        for row, (label, var) in enumerate(
+            [
+                ("Frames (2–120)", frames_var),
+                ("Final zoom (0–1)", zoom_var),
+                ("Random seed", seed_var),
+            ],
+            start=3,
+        ):
+            ttk.Label(dialog, text=label).grid(row=row, column=0, padx=12, pady=5, sticky="w")
+            ttk.Entry(dialog, textvariable=var, width=23).grid(row=row, column=1, padx=12, pady=5)
+        selection = []
+
+        def accept() -> None:
+            try:
+                options = AnimationOptions(
+                    frames=int(frames_var.get()),
+                    zoom_factor=float(zoom_var.get()),
+                    motion=motion.get(),
+                    color_effect=effect.get(),
+                    second_palette=second.get(),
+                    seed=int(seed_var.get()),
+                )
+            except ValueError as exc:
+                messagebox.showerror("Invalid animation settings", str(exc), parent=dialog)
+                return
+            selection.append(options)
+            dialog.destroy()
+
+        ttk.Button(dialog, text="Export…", command=accept).grid(row=6, column=1, pady=10)
+        ttk.Button(dialog, text="Cancel", command=dialog.destroy).grid(row=6, column=0, pady=10)
+        dialog.wait_window()
+        if not selection:
             return
-        zoom_factor = simpledialog.askfloat(
-            "GIF zoom",
-            "Final viewport scale (0.05–0.95):",
-            parent=self.root,
-            initialvalue=0.3,
-            minvalue=0.05,
-            maxvalue=0.95,
-        )
-        if zoom_factor is None:
-            return
-        options = AnimationOptions(frames=frames, zoom_factor=zoom_factor)
+        options = selection[0]
         view, settings = self.view, self.settings
         palette, gamma, mode = self.palette.get(), self.gamma.get(), self.display_mode.get()
-        filename = (
-            suggested_filename(
-                mode=mode,
-                palette=palette,
-                gamma=gamma,
-                transient=settings.transient,
-                samples=settings.samples,
-                omega_min=view.omega_min,
-                omega_max=view.omega_max,
-                coupling_min=view.coupling_min,
-                coupling_max=view.coupling_max,
-            ).removesuffix(".png")
-            + f"_zoom{zoom_factor:.2f}_{frames}f.gif"
+        filename = suggested_filename(
+            mode=mode,
+            palette=palette,
+            gamma=gamma,
+            transient=settings.transient,
+            samples=settings.samples,
+            omega_min=view.omega_min,
+            omega_max=view.omega_max,
+            coupling_min=view.coupling_min,
+            coupling_max=view.coupling_max,
+        ).removesuffix(".png") + (
+            f"_{options.motion.lower().replace(' ', '-')}_z{options.zoom_factor:.2f}"
+            f"_{options.color_effect.lower().replace(' ', '-')}_"
+            f"{options.second_palette.lower() if options.color_effect == 'Palette Pulse' else 'base'}"
+            f"_seed{options.seed if options.motion == 'Random Walk' else 0}"
+            f"_{options.frames}f.gif"
         )
         path = filedialog.asksaveasfilename(
             title="Export zoom animation",

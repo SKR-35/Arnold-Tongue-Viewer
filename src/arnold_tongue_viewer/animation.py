@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +22,10 @@ class AnimationOptions:
     height: int = 420
     duration_ms: int = 100
     zoom_factor: float = 0.3
+    motion: str = "Smooth Zoom"
+    color_effect: str = "Static"
+    second_palette: str = "Jade"
+    seed: int = 42
 
     def __post_init__(self) -> None:
         if not 2 <= self.frames <= 120:
@@ -29,6 +34,10 @@ class AnimationOptions:
             raise ValueError("invalid animation dimensions")
         if not 20 <= self.duration_ms <= 2000:
             raise ValueError("invalid frame duration")
+        if self.motion not in {"Smooth Zoom", "Orbit", "Pendulum", "Random Walk"}:
+            raise ValueError("unknown animation motion")
+        if self.color_effect not in {"Static", "Palette Pulse", "Negative Pulse"}:
+            raise ValueError("unknown color effect")
         if not 0 < self.zoom_factor < 1:
             raise ValueError("zoom factor must be between 0 and 1")
 
@@ -40,14 +49,35 @@ def animation_viewports(view: Viewport, options: AnimationOptions) -> tuple[View
     half_o = (view.omega_max - view.omega_min) / 2
     half_k = (view.coupling_max - view.coupling_min) / 2
     result = []
-    for t in np.linspace(0.0, 1.0, options.frames):
+    rng = np.random.default_rng(options.seed)
+    offsets = rng.normal(size=(options.frames, 2))
+    offsets = np.cumsum(offsets, axis=0)
+    offsets -= offsets[0]
+    peak = max(float(np.max(np.abs(offsets))), 1.0)
+    offsets /= peak
+    for index, t in enumerate(np.linspace(0.0, 1.0, options.frames)):
+        phase = 2 * math.pi * float(t)
         scale = options.zoom_factor ** float(t)
+        # Motion is measured relative to the original viewport dimensions.
+        # Fade offsets to zero at both ends for a clean beginning/end.
+        envelope = math.sin(math.pi * float(t))
+        if options.motion == "Orbit":
+            dx = 0.18 * envelope * (math.cos(phase) - 1)
+            dy = 0.18 * envelope * math.sin(phase)
+        elif options.motion == "Pendulum":
+            dx, dy = 0.23 * envelope * math.sin(2 * phase), 0.0
+        elif options.motion == "Random Walk":
+            dx, dy = 0.18 * envelope * offsets[index]
+        else:
+            dx, dy = 0.0, 0.0
+        x = center_o + dx * half_o * 2
+        y = center_k + dy * half_k * 2
         result.append(
             Viewport(
-                center_o - half_o * scale,
-                center_o + half_o * scale,
-                center_k - half_k * scale,
-                center_k + half_k * scale,
+                x - half_o * scale,
+                x + half_o * scale,
+                y - half_k * scale,
+                y + half_k * scale,
             )
         )
     return tuple(result)
@@ -89,17 +119,36 @@ def save_zoom_gif(
         raise ValueError("Animation export requires a .gif filename")
     images = []
     for index, frame_view in enumerate(animation_viewports(view, options), start=1):
-        images.append(
-            render_animation_frame(
-                frame_view,
-                settings,
-                width=options.width,
-                height=options.height,
-                palette=palette,
-                mode=mode,
-                gamma=gamma,
-            )
+        frame = render_animation_frame(
+            frame_view,
+            settings,
+            width=options.width,
+            height=options.height,
+            palette=palette,
+            mode=mode,
+            gamma=gamma,
         )
+        if options.color_effect != "Static":
+            # Sinusoidal brightness mixing avoids sudden color jumps.
+            weight = (1 - math.cos(2 * math.pi * (index - 1) / options.frames)) / 2
+            if options.color_effect == "Palette Pulse":
+                other = render_animation_frame(
+                    frame_view,
+                    settings,
+                    width=options.width,
+                    height=options.height,
+                    palette=options.second_palette,
+                    mode=mode,
+                    gamma=gamma,
+                )
+                frame = Image.blend(frame.convert("RGB"), other.convert("RGB"), weight)
+            else:
+                from PIL import ImageOps
+
+                frame = Image.blend(
+                    frame.convert("RGB"), ImageOps.invert(frame.convert("RGB")), weight
+                )
+        images.append(frame)
         if on_progress:
             on_progress(index, options.frames)
     path.parent.mkdir(parents=True, exist_ok=True)
