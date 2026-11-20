@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .core import CircleMapSettings, rotation_number_grid
+from .core import CircleMapSettings, accelerated_rotation_number_grid
 from .palettes import colorize
 
 
@@ -48,7 +48,7 @@ def rotation_field(
 ) -> np.ndarray:
     """Calculate finite-time winding estimates for every pixel."""
     omegas, couplings = parameter_grid(view, width, height)
-    return rotation_number_grid(omegas, couplings, settings)
+    return accelerated_rotation_number_grid(omegas, couplings, settings)
 
 
 def render_rgb(

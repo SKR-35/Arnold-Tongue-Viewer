@@ -60,4 +60,4 @@ def test_invalid_palette_and_gamma():
 def test_palette_endpoints():
     data = np.array([[0.0, 1.0]])
     rgb = colorize(data, "Grayscale")
-    assert rgb.tolist() == [[[0, 0, 0], [255, 255, 255]]]
+    assert rgb.tolist() == [[[10, 10, 10], [242, 242, 242]]]

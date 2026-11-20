@@ -90,3 +90,54 @@ def rotation_number_grid(
         displacement += delta
         phase = (phase + delta) % 1.0
     return displacement / config.samples
+
+
+# A separate optional JIT kernel avoids changing the established NumPy API.
+try:
+    from numba import njit, prange
+except ImportError:  # pragma: no cover - exercised in installations without numba
+    njit = None
+    prange = range
+
+HAS_NUMBA = njit is not None
+
+if HAS_NUMBA:
+
+    @njit(cache=True, parallel=True)
+    def _rotation_grid_jit(omega, coupling, transient, samples, theta0):
+        output = np.empty(omega.shape, dtype=np.float64)
+        flat_o = omega.ravel()
+        flat_k = coupling.ravel()
+        flat_result = output.ravel()
+        for index in prange(flat_o.size):
+            o = flat_o[index]
+            factor = flat_k[index] / (2.0 * np.pi)
+            phase = theta0 % 1.0
+            for _ in range(transient):
+                phase = (phase + o - factor * np.sin(2.0 * np.pi * phase)) % 1.0
+            displacement = 0.0
+            for _ in range(samples):
+                delta = o - factor * np.sin(2.0 * np.pi * phase)
+                displacement += delta
+                phase = (phase + delta) % 1.0
+            flat_result[index] = displacement / samples
+        return output
+
+
+def accelerated_rotation_number_grid(omegas, couplings, settings=None):
+    """Use Numba when available; otherwise preserve the NumPy implementation."""
+    config = settings or CircleMapSettings()
+    omega, coupling = np.broadcast_arrays(
+        np.asarray(omegas, dtype=np.float64), np.asarray(couplings, dtype=np.float64)
+    )
+    if not np.isfinite(omega).all() or not np.isfinite(coupling).all():
+        raise ValueError("parameter arrays must contain only finite values")
+    if not HAS_NUMBA:
+        return rotation_number_grid(omega, coupling, config)
+    return _rotation_grid_jit(
+        np.ascontiguousarray(omega),
+        np.ascontiguousarray(coupling),
+        config.transient,
+        config.samples,
+        config.theta0,
+    )

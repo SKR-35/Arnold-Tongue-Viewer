@@ -11,7 +11,7 @@ from tkinter import messagebox, ttk
 import numpy as np
 from PIL import Image, ImageTk
 
-from .core import CircleMapSettings
+from .core import HAS_NUMBA, CircleMapSettings
 from .palettes import PALETTES
 from .render import Viewport, render_rgb
 
@@ -62,6 +62,7 @@ class ArnoldViewer:
         self._results: queue.SimpleQueue = queue.SimpleQueue()
         self._generation = 0
         self._pending: str | None = None
+        self._refine_pending: str | None = None
         self._image: ImageTk.PhotoImage | None = None
         self._drag: tuple[int, int] | None = None
         self._closed = False
@@ -110,38 +111,56 @@ class ArnoldViewer:
     def _schedule_render(self) -> None:
         if self._pending is not None:
             self.root.after_cancel(self._pending)
+        if self._refine_pending is not None:
+            self.root.after_cancel(self._refine_pending)
+            self._refine_pending = None
         self._pending = self.root.after(180, self.request_render)
 
     def request_render(self) -> None:
         self._pending = None
+        if self._refine_pending is not None:
+            self.root.after_cancel(self._refine_pending)
+            self._refine_pending = None
         self._generation += 1
         generation = self._generation
         width, height = self._dimensions()
-        # Bounded preview until Numba and progressive rendering arrive in Commit 05.
-        scale = min(1.0, 320 / width, 240 / height)
-        rw, rh = max(2, int(width * scale)), max(2, int(height * scale))
         view, settings = self.view, self.settings
         palette, gamma = self.palette.get(), self.gamma.get()
         self.status.set(
-            f"Rendering preview…  Ω [{view.omega_min:.3f}, {view.omega_max:.3f}]  "
-            f"K [{view.coupling_min:.3f}, {view.coupling_max:.3f}]"
+            f"Rendering preview…  Ω [{view.omega_min:.3f}, {view.omega_max:.3f}] "
+            f"K [{view.coupling_min:.3f}, {view.coupling_max:.3f}] "
+            f"Numba={'ON' if HAS_NUMBA else 'OFF'}"
         )
 
-        def work() -> None:
-            try:
-                rgb = render_rgb(view, rw, rh, settings, palette=palette, gamma=gamma)
-                image = Image.fromarray(rgb).resize((width, height), Image.Resampling.BILINEAR)
-                self._results.put((generation, image, None))
-            except Exception as exc:
-                self._results.put((generation, None, str(exc)))
+        def submit_render(quality: str) -> None:
+            if generation != self._generation or self._closed:
+                return
+            if quality == "preview":
+                scale = min(1.0, 320 / width, 240 / height)
+            else:
+                scale = 1.0
+            rw, rh = max(2, int(width * scale)), max(2, int(height * scale))
 
-        self._executor.submit(work)
+            def work() -> None:
+                try:
+                    rgb = render_rgb(view, rw, rh, settings, palette=palette, gamma=gamma)
+                    image = Image.fromarray(rgb)
+                    if (rw, rh) != (width, height):
+                        image = image.resize((width, height), Image.Resampling.BILINEAR)
+                    self._results.put((generation, quality, image, None))
+                except Exception as exc:
+                    self._results.put((generation, quality, None, str(exc)))
+
+            self._executor.submit(work)
+
+        submit_render("preview")
+        self._refine_pending = self.root.after(400, lambda: submit_render("full"))
 
     def _poll_results(self) -> None:
         if self._closed:
             return
         while not self._results.empty():
-            generation, image, error = self._results.get()
+            generation, quality, image, error = self._results.get()
             if generation != self._generation:
                 continue
             if error:
@@ -151,7 +170,9 @@ class ArnoldViewer:
                 self.canvas.delete("image")
                 self.canvas.create_image(0, 0, image=self._image, anchor="nw", tags="image")
                 self.status.set(
-                    "Preview ready · Scroll to zoom · Drag to pan · Apply iteration settings"
+                    f"{quality.title()} ready · Ω [{self.view.omega_min:.3f}, "
+                    f"{self.view.omega_max:.3f}] · K [{self.view.coupling_min:.3f}, "
+                    f"{self.view.coupling_max:.3f}] · Numba={'ON' if HAS_NUMBA else 'OFF'}"
                 )
         self.root.after(60, self._poll_results)
 
@@ -200,6 +221,8 @@ class ArnoldViewer:
         self._closed = True
         if self._pending is not None:
             self.root.after_cancel(self._pending)
+        if self._refine_pending is not None:
+            self.root.after_cancel(self._refine_pending)
         self._executor.shutdown(wait=False, cancel_futures=True)
         self.root.destroy()
 
