@@ -126,7 +126,6 @@ class ArnoldViewer:
             command=lambda _: self._schedule_render(),
             length=120,
         ).pack(side=tk.LEFT)
-        self.gamma_scale.state(["disabled"])
         ttk.Label(controls, text="Transient").pack(side=tk.LEFT, padx=(10, 2))
         ttk.Entry(controls, textvariable=self.transient, width=6).pack(side=tk.LEFT)
         ttk.Label(controls, text="Samples").pack(side=tk.LEFT, padx=(10, 2))
