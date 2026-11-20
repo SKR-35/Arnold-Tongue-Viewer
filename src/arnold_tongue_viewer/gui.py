@@ -45,6 +45,25 @@ def pan_view(view: Viewport, dx_fraction: float, dy_fraction: float) -> Viewport
     )
 
 
+def rectangle_view(view: Viewport, x0: float, y0: float, x1: float, y1: float) -> Viewport:
+    """Convert normalized screen rectangle to a parameter-space viewport."""
+    values = (x0, y0, x1, y1)
+    if not all(np.isfinite(v) and 0 <= v <= 1 for v in values):
+        raise ValueError("rectangle coordinates must be finite and within [0, 1]")
+    if x0 == x1 or y0 == y1:
+        raise ValueError("rectangle must have positive area")
+    left, right = sorted((x0, x1))
+    top, bottom = sorted((y0, y1))
+    dw = view.omega_max - view.omega_min
+    dh = view.coupling_max - view.coupling_min
+    return Viewport(
+        view.omega_min + left * dw,
+        view.omega_min + right * dw,
+        view.coupling_max - bottom * dh,
+        view.coupling_max - top * dh,
+    )
+
+
 class ArnoldViewer:
     """Interactive parameter-plane viewer; all Tk operations stay on the main thread."""
 
@@ -57,6 +76,7 @@ class ArnoldViewer:
         self.palette = tk.StringVar(value="Yikique")
         self.display_mode = tk.StringVar(value="Mode locking")
         self.gamma = tk.DoubleVar(value=1.0)
+        self.navigation_mode = tk.StringVar(value="Rectangle zoom")
         self.transient = tk.StringVar(value="100")
         self.samples = tk.StringVar(value="250")
         self.status = tk.StringVar(value="Ready")
@@ -67,6 +87,7 @@ class ArnoldViewer:
         self._refine_pending: str | None = None
         self._image: ImageTk.PhotoImage | None = None
         self._drag: tuple[int, int] | None = None
+        self._selection_id: int | None = None
         self._closed = False
 
         controls = ttk.Frame(self.root, padding=6)
@@ -74,6 +95,15 @@ class ArnoldViewer:
         ttk.Button(controls, text="Zoom +", command=lambda: self._zoom(0.7)).pack(side=tk.LEFT)
         ttk.Button(controls, text="Zoom -", command=lambda: self._zoom(1 / 0.7)).pack(side=tk.LEFT)
         ttk.Button(controls, text="Reset", command=self._reset).pack(side=tk.LEFT, padx=6)
+        ttk.Label(controls, text="Mouse").pack(side=tk.LEFT)
+        ttk.OptionMenu(
+            controls,
+            self.navigation_mode,
+            "Rectangle zoom",
+            "Rectangle zoom",
+            "Pan",
+            command=lambda _: self._cancel_drag(),
+        ).pack(side=tk.LEFT)
         ttk.Label(controls, text="Palette").pack(side=tk.LEFT)
         ttk.OptionMenu(
             controls, self.palette, "Yikique", *PALETTES, command=lambda _: self.request_render()
@@ -85,10 +115,10 @@ class ArnoldViewer:
             "Mode locking",
             "Mode locking",
             "Rotation number",
-            command=lambda _: self.request_render(),
+            command=lambda _: self._change_display_mode(),
         ).pack(side=tk.LEFT)
         ttk.Label(controls, text="Gamma").pack(side=tk.LEFT, padx=(10, 2))
-        ttk.Scale(
+        self.gamma_scale = ttk.Scale(
             controls,
             from_=0.5,
             to=2.5,
@@ -96,6 +126,7 @@ class ArnoldViewer:
             command=lambda _: self._schedule_render(),
             length=120,
         ).pack(side=tk.LEFT)
+        self.gamma_scale.state(["disabled"])
         ttk.Label(controls, text="Transient").pack(side=tk.LEFT, padx=(10, 2))
         ttk.Entry(controls, textvariable=self.transient, width=6).pack(side=tk.LEFT)
         ttk.Label(controls, text="Samples").pack(side=tk.LEFT, padx=(10, 2))
@@ -109,12 +140,19 @@ class ArnoldViewer:
         self.canvas.bind("<MouseWheel>", self._wheel)
         self.canvas.bind("<Button-4>", lambda event: self._zoom_at(0.8, event.x, event.y))
         self.canvas.bind("<Button-5>", lambda event: self._zoom_at(1.25, event.x, event.y))
-        self.canvas.bind("<ButtonPress-1>", self._start_pan)
-        self.canvas.bind("<B1-Motion>", self._pan)
-        self.canvas.bind("<ButtonRelease-1>", lambda _: self._end_pan())
+        self.canvas.bind("<ButtonPress-1>", self._start_drag)
+        self.canvas.bind("<B1-Motion>", self._drag_motion)
+        self.canvas.bind("<ButtonRelease-1>", self._end_drag)
+        self.canvas.bind("<Escape>", lambda _: self._cancel_drag())
         self.root.protocol("WM_DELETE_WINDOW", self._close)
         self.root.after(60, self._poll_results)
         self._schedule_render()
+
+    def _change_display_mode(self) -> None:
+        self.gamma_scale.state(
+            ["disabled"] if self.display_mode.get() == "Mode locking" else ["!disabled"]
+        )
+        self.request_render()
 
     def _dimensions(self) -> tuple[int, int]:
         return max(2, self.canvas.winfo_width()), max(2, self.canvas.winfo_height())
@@ -214,27 +252,68 @@ class ArnoldViewer:
     def _wheel(self, event: tk.Event) -> None:
         self._zoom_at(0.8 if event.delta > 0 else 1.25, event.x, event.y)
 
-    def _start_pan(self, event: tk.Event) -> None:
+    def _start_drag(self, event: tk.Event) -> None:
+        self._cancel_drag()
         self._drag = (event.x, event.y)
+        if self.navigation_mode.get() == "Rectangle zoom":
+            self._selection_id = self.canvas.create_rectangle(
+                event.x,
+                event.y,
+                event.x,
+                event.y,
+                outline="#ffffff",
+                width=2,
+                dash=(5, 3),
+                tags="selection",
+            )
 
-    def _pan(self, event: tk.Event) -> None:
+    def _drag_motion(self, event: tk.Event) -> None:
         if self._drag is None:
             return
         x, y = self._drag
         w, h = self._dimensions()
-        self.view = pan_view(self.view, (event.x - x) / w, (event.y - y) / h)
-        self._drag = (event.x, event.y)
+        if self.navigation_mode.get() == "Pan":
+            self.view = pan_view(self.view, (event.x - x) / w, (event.y - y) / h)
+            self._drag = (event.x, event.y)
+            self._schedule_render()
+        elif self._selection_id is not None:
+            self.canvas.coords(
+                self._selection_id,
+                x,
+                y,
+                min(w, max(0, event.x)),
+                min(h, max(0, event.y)),
+            )
+
+    def _end_drag(self, event: tk.Event) -> None:
+        start = self._drag
+        mode = self.navigation_mode.get()
+        self._cancel_drag()
+        if start is None or mode != "Rectangle zoom":
+            return
+        w, h = self._dimensions()
+        x0, y0 = start
+        x1 = min(w, max(0, event.x))
+        y1 = min(h, max(0, event.y))
+        if abs(x1 - x0) < 6 or abs(y1 - y0) < 6:
+            return
+        self.view = rectangle_view(self.view, x0 / w, y0 / h, x1 / w, y1 / h)
         self._schedule_render()
 
-    def _end_pan(self) -> None:
+    def _cancel_drag(self) -> None:
         self._drag = None
+        if self._selection_id is not None:
+            self.canvas.delete(self._selection_id)
+            self._selection_id = None
 
     def _reset(self) -> None:
+        self._cancel_drag()
         self.view = Viewport()
         self.request_render()
 
     def _close(self) -> None:
         self._closed = True
+        self._cancel_drag()
         if self._pending is not None:
             self.root.after_cancel(self._pending)
         if self._refine_pending is not None:
