@@ -92,11 +92,14 @@ def render_animation_frame(
     palette: str,
     mode: str,
     gamma: float,
+    family: str = "Sine",
 ) -> Image.Image:
     if mode == "Mode locking":
+        if family != "Sine":
+            raise ValueError("Mode locking currently supports only the Sine family")
         rgb = colorize_locking(locking_field(view, width, height, settings), palette)
     elif mode == "Rotation number":
-        rgb = render_rgb(view, width, height, settings, palette=palette, gamma=gamma)
+        rgb = render_rgb(view, width, height, settings, palette=palette, gamma=gamma, family=family)
     else:
         raise ValueError(f"Unknown display mode: {mode}")
     return Image.fromarray(rgb)
@@ -110,6 +113,7 @@ def save_zoom_gif(
     palette: str,
     mode: str,
     gamma: float,
+    family: str = "Sine",
     options: AnimationOptions = AnimationOptions(),
     on_progress: Callable[[int, int], None] | None = None,
 ) -> Path:
@@ -119,6 +123,7 @@ def save_zoom_gif(
         raise ValueError("Animation export requires a .gif filename")
     images = []
     for index, frame_view in enumerate(animation_viewports(view, options), start=1):
+        frame_kwargs = {"family": family} if family != "Sine" else {}
         frame = render_animation_frame(
             frame_view,
             settings,
@@ -127,6 +132,7 @@ def save_zoom_gif(
             palette=palette,
             mode=mode,
             gamma=gamma,
+            **frame_kwargs,
         )
         if options.color_effect != "Static":
             # Sinusoidal brightness mixing avoids sudden color jumps.
@@ -140,6 +146,7 @@ def save_zoom_gif(
                     palette=options.second_palette,
                     mode=mode,
                     gamma=gamma,
+                    **frame_kwargs,
                 )
                 frame = Image.blend(frame.convert("RGB"), other.convert("RGB"), weight)
             else:

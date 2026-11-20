@@ -15,6 +15,7 @@ from .animation import AnimationOptions, save_zoom_gif
 from .core import HAS_NUMBA, CircleMapSettings
 from .export import save_image, suggested_filename
 from .locking import colorize_locking, locking_field
+from .map_families import MAP_FAMILIES
 from .palettes import PALETTES
 from .render import Viewport, render_rgb
 
@@ -77,6 +78,7 @@ class ArnoldViewer:
         self.settings = CircleMapSettings(transient=100, samples=250)
         self.palette = tk.StringVar(value="Yikique")
         self.display_mode = tk.StringVar(value="Mode locking")
+        self.map_family = tk.StringVar(value="Sine")
         self.gamma = tk.DoubleVar(value=1.0)
         self.navigation_mode = tk.StringVar(value="Rectangle zoom")
         self.transient = tk.StringVar(value="100")
@@ -109,6 +111,14 @@ class ArnoldViewer:
         ttk.Label(controls, text="Palette").pack(side=tk.LEFT)
         ttk.OptionMenu(
             controls, self.palette, "Yikique", *PALETTES, command=lambda _: self.request_render()
+        ).pack(side=tk.LEFT)
+        ttk.Label(controls, text="Map").pack(side=tk.LEFT, padx=(10, 2))
+        ttk.OptionMenu(
+            controls,
+            self.map_family,
+            "Sine",
+            *MAP_FAMILIES,
+            command=lambda _: self._change_map_family(),
         ).pack(side=tk.LEFT)
         ttk.Label(controls, text="Mode").pack(side=tk.LEFT, padx=(10, 2))
         ttk.OptionMenu(
@@ -155,7 +165,15 @@ class ArnoldViewer:
         self.root.after(60, self._poll_results)
         self._schedule_render()
 
+    def _change_map_family(self) -> None:
+        # Locking classification currently relies on sine-specific derivatives.
+        if self.map_family.get() != "Sine" and self.display_mode.get() == "Mode locking":
+            self.display_mode.set("Rotation number")
+        self._change_display_mode()
+
     def _change_display_mode(self) -> None:
+        if self.map_family.get() != "Sine" and self.display_mode.get() == "Mode locking":
+            self.display_mode.set("Rotation number")
         self.gamma_scale.state(
             ["disabled"] if self.display_mode.get() == "Mode locking" else ["!disabled"]
         )
@@ -183,10 +201,11 @@ class ArnoldViewer:
         view, settings = self.view, self.settings
         palette, gamma = self.palette.get(), self.gamma.get()
         display_mode = self.display_mode.get()
+        family = self.map_family.get()
         self.status.set(
             f"Rendering preview…  Ω [{view.omega_min:.3f}, {view.omega_max:.3f}] "
             f"K [{view.coupling_min:.3f}, {view.coupling_max:.3f}] "
-            f"Numba={'ON' if HAS_NUMBA else 'OFF'}"
+            f"Map={family} · Numba={'ON' if HAS_NUMBA else 'OFF'}"
         )
 
         def submit_render(quality: str) -> None:
@@ -204,7 +223,15 @@ class ArnoldViewer:
                         labels = locking_field(view, rw, rh, settings)
                         rgb = colorize_locking(labels, palette)
                     else:
-                        rgb = render_rgb(view, rw, rh, settings, palette=palette, gamma=gamma)
+                        rgb = render_rgb(
+                            view,
+                            rw,
+                            rh,
+                            settings,
+                            palette=palette,
+                            gamma=gamma,
+                            family=family,
+                        )
                     image = Image.fromarray(rgb)
                     if (rw, rh) != (width, height):
                         image = image.resize((width, height), Image.Resampling.BILINEAR)
@@ -261,6 +288,7 @@ class ArnoldViewer:
         view, settings = self.view, self.settings
         palette, gamma = self.palette.get(), self.gamma.get()
         display_mode = self.display_mode.get()
+        family = self.map_family.get()
         filename = suggested_filename(
             mode=display_mode,
             palette=palette,
@@ -272,6 +300,7 @@ class ArnoldViewer:
             coupling_min=view.coupling_min,
             coupling_max=view.coupling_max,
         )
+        filename = filename.removesuffix(".png") + f"_{family.lower()}.png"
         path = filedialog.asksaveasfilename(
             title="Export Arnold tongue image",
             initialfile=filename,
@@ -284,6 +313,7 @@ class ArnoldViewer:
         view, settings = self.view, self.settings
         palette, gamma = self.palette.get(), self.gamma.get()
         display_mode = self.display_mode.get()
+        family = self.map_family.get()
         self.status.set("Exporting image…")
 
         def work() -> None:
@@ -291,7 +321,15 @@ class ArnoldViewer:
                 if display_mode == "Mode locking":
                     rgb = colorize_locking(locking_field(view, width, height, settings), palette)
                 else:
-                    rgb = render_rgb(view, width, height, settings, palette=palette, gamma=gamma)
+                    rgb = render_rgb(
+                        view,
+                        width,
+                        height,
+                        settings,
+                        palette=palette,
+                        gamma=gamma,
+                        family=family,
+                    )
                 save_image(rgb, path)
                 self._results.put((None, "export", None, str(path)))
             except Exception as exc:
@@ -357,6 +395,7 @@ class ArnoldViewer:
         options = selection[0]
         view, settings = self.view, self.settings
         palette, gamma, mode = self.palette.get(), self.gamma.get(), self.display_mode.get()
+        family = self.map_family.get()
         filename = suggested_filename(
             mode=mode,
             palette=palette,
@@ -368,6 +407,7 @@ class ArnoldViewer:
             coupling_min=view.coupling_min,
             coupling_max=view.coupling_max,
         ).removesuffix(".png") + (
+            f"_{family.lower()}"
             f"_{options.motion.lower().replace(' ', '-')}_z{options.zoom_factor:.2f}"
             f"_{options.color_effect.lower().replace(' ', '-')}_"
             f"{options.second_palette.lower() if options.color_effect == 'Palette Pulse' else 'base'}"
@@ -393,6 +433,7 @@ class ArnoldViewer:
                     palette=palette,
                     mode=mode,
                     gamma=gamma,
+                    family=family,
                     options=options,
                     on_progress=lambda n, total: self._results.put(
                         (None, "animation-progress", None, f"{n}/{total}")

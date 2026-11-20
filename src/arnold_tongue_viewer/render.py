@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from .core import CircleMapSettings, accelerated_rotation_number_grid
+from .map_families import MAP_FAMILIES, family_rotation_grid
 from .palettes import colorize
 
 
@@ -45,10 +46,16 @@ def rotation_field(
     width: int,
     height: int,
     settings: CircleMapSettings | None = None,
+    *,
+    family: str = "Sine",
 ) -> np.ndarray:
     """Calculate finite-time winding estimates for every pixel."""
     omegas, couplings = parameter_grid(view, width, height)
-    return accelerated_rotation_number_grid(omegas, couplings, settings)
+    if family not in MAP_FAMILIES:
+        raise ValueError(f"Unknown map family: {family}")
+    if family == "Sine":
+        return accelerated_rotation_number_grid(omegas, couplings, settings)
+    return family_rotation_grid(omegas, couplings, settings, family=family)
 
 
 def render_rgb(
@@ -59,8 +66,9 @@ def render_rgb(
     *,
     palette: str = "Jade",
     gamma: float = 1.0,
+    family: str = "Sine",
 ) -> np.ndarray:
     """Render a color image (height, width, 3) with no GUI dependencies."""
-    field = rotation_field(view, width, height, settings)
+    field = rotation_field(view, width, height, settings, family=family)
     # Modulo one creates a periodic hue convention for the rotation number.
     return colorize(np.mod(field, 1.0), palette=palette, gamma=gamma)
