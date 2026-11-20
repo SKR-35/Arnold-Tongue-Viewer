@@ -6,11 +6,12 @@ import queue
 import tkinter as tk
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 import numpy as np
 from PIL import Image, ImageTk
 
+from .animation import AnimationOptions, save_zoom_gif
 from .core import HAS_NUMBA, CircleMapSettings
 from .export import save_image, suggested_filename
 from .locking import colorize_locking, locking_field
@@ -137,6 +138,7 @@ class ArnoldViewer:
         ttk.Button(controls, text="Export image", command=self._export_image).pack(
             side=tk.LEFT, padx=5
         )
+        ttk.Button(controls, text="Export GIF", command=self._export_gif).pack(side=tk.LEFT, padx=5)
 
         self.canvas = tk.Canvas(self.root, background="#07151b", highlightthickness=0)
         self.canvas.pack(fill=tk.BOTH, expand=True)
@@ -221,7 +223,9 @@ class ArnoldViewer:
         while not self._results.empty():
             generation, quality, image, error = self._results.get()
             if generation is None:
-                if quality == "export":
+                if quality == "animation-progress":
+                    self.status.set(f"Rendering GIF frame {error}")
+                elif quality == "export":
                     self.status.set(f"Image saved: {error}")
                 else:
                     self.status.set(f"Export failed: {error}")
@@ -289,6 +293,75 @@ class ArnoldViewer:
                 else:
                     rgb = render_rgb(view, width, height, settings, palette=palette, gamma=gamma)
                 save_image(rgb, path)
+                self._results.put((None, "export", None, str(path)))
+            except Exception as exc:
+                self._results.put((None, "export-error", None, str(exc)))
+
+        self._executor.submit(work)
+
+    def _export_gif(self) -> None:
+        """Export a geometric zoom into the center of the current viewport."""
+        frames = simpledialog.askinteger(
+            "GIF frames",
+            "Number of frames (2–120):",
+            parent=self.root,
+            initialvalue=24,
+            minvalue=2,
+            maxvalue=120,
+        )
+        if frames is None:
+            return
+        zoom_factor = simpledialog.askfloat(
+            "GIF zoom",
+            "Final viewport scale (0.05–0.95):",
+            parent=self.root,
+            initialvalue=0.3,
+            minvalue=0.05,
+            maxvalue=0.95,
+        )
+        if zoom_factor is None:
+            return
+        options = AnimationOptions(frames=frames, zoom_factor=zoom_factor)
+        view, settings = self.view, self.settings
+        palette, gamma, mode = self.palette.get(), self.gamma.get(), self.display_mode.get()
+        filename = (
+            suggested_filename(
+                mode=mode,
+                palette=palette,
+                gamma=gamma,
+                transient=settings.transient,
+                samples=settings.samples,
+                omega_min=view.omega_min,
+                omega_max=view.omega_max,
+                coupling_min=view.coupling_min,
+                coupling_max=view.coupling_max,
+            ).removesuffix(".png")
+            + f"_zoom{zoom_factor:.2f}_{frames}f.gif"
+        )
+        path = filedialog.asksaveasfilename(
+            title="Export zoom animation",
+            initialfile=filename,
+            defaultextension=".gif",
+            filetypes=[("Animated GIF", "*.gif")],
+        )
+        if not path:
+            return
+        self.status.set("Exporting zoom GIF…")
+
+        def work() -> None:
+            try:
+                save_zoom_gif(
+                    path,
+                    view,
+                    settings,
+                    palette=palette,
+                    mode=mode,
+                    gamma=gamma,
+                    options=options,
+                    on_progress=lambda n, total: self._results.put(
+                        (None, "animation-progress", None, f"{n}/{total}")
+                    ),
+                )
                 self._results.put((None, "export", None, str(path)))
             except Exception as exc:
                 self._results.put((None, "export-error", None, str(exc)))
