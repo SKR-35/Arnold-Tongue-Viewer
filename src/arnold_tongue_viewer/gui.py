@@ -12,6 +12,7 @@ import numpy as np
 from PIL import Image, ImageTk
 
 from .core import HAS_NUMBA, CircleMapSettings
+from .locking import colorize_locking, locking_field
 from .palettes import PALETTES
 from .render import Viewport, render_rgb
 
@@ -53,7 +54,8 @@ class ArnoldViewer:
         self.root.geometry("1100x750")
         self.view = Viewport()
         self.settings = CircleMapSettings(transient=100, samples=250)
-        self.palette = tk.StringVar(value="Jade")
+        self.palette = tk.StringVar(value="Yikique")
+        self.display_mode = tk.StringVar(value="Mode locking")
         self.gamma = tk.DoubleVar(value=1.0)
         self.transient = tk.StringVar(value="100")
         self.samples = tk.StringVar(value="250")
@@ -74,7 +76,16 @@ class ArnoldViewer:
         ttk.Button(controls, text="Reset", command=self._reset).pack(side=tk.LEFT, padx=6)
         ttk.Label(controls, text="Palette").pack(side=tk.LEFT)
         ttk.OptionMenu(
-            controls, self.palette, "Jade", *PALETTES, command=lambda _: self.request_render()
+            controls, self.palette, "Yikique", *PALETTES, command=lambda _: self.request_render()
+        ).pack(side=tk.LEFT)
+        ttk.Label(controls, text="Mode").pack(side=tk.LEFT, padx=(10, 2))
+        ttk.OptionMenu(
+            controls,
+            self.display_mode,
+            "Mode locking",
+            "Mode locking",
+            "Rotation number",
+            command=lambda _: self.request_render(),
         ).pack(side=tk.LEFT)
         ttk.Label(controls, text="Gamma").pack(side=tk.LEFT, padx=(10, 2))
         ttk.Scale(
@@ -126,6 +137,7 @@ class ArnoldViewer:
         width, height = self._dimensions()
         view, settings = self.view, self.settings
         palette, gamma = self.palette.get(), self.gamma.get()
+        display_mode = self.display_mode.get()
         self.status.set(
             f"Rendering preview…  Ω [{view.omega_min:.3f}, {view.omega_max:.3f}] "
             f"K [{view.coupling_min:.3f}, {view.coupling_max:.3f}] "
@@ -143,7 +155,11 @@ class ArnoldViewer:
 
             def work() -> None:
                 try:
-                    rgb = render_rgb(view, rw, rh, settings, palette=palette, gamma=gamma)
+                    if display_mode == "Mode locking":
+                        labels = locking_field(view, rw, rh, settings)
+                        rgb = colorize_locking(labels, palette)
+                    else:
+                        rgb = render_rgb(view, rw, rh, settings, palette=palette, gamma=gamma)
                     image = Image.fromarray(rgb)
                     if (rw, rh) != (width, height):
                         image = image.resize((width, height), Image.Resampling.BILINEAR)
