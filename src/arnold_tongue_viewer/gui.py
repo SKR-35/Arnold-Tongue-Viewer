@@ -6,13 +6,14 @@ import queue
 import tkinter as tk
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 import numpy as np
 from PIL import Image, ImageTk
 
 from .animation import AnimationOptions, save_zoom_gif
 from .core import HAS_NUMBA, CircleMapSettings
+from .explorer import EXPLORER_MODES, RecurrenceOptions, render_explorer_rgb
 from .export import save_image, suggested_filename
 from .locking import colorize_locking, locking_field
 from .map_families import MAP_FAMILIES
@@ -78,6 +79,7 @@ class ArnoldViewer:
         self.settings = CircleMapSettings(transient=100, samples=250)
         self.palette = tk.StringVar(value="Yikique")
         self.display_mode = tk.StringVar(value="Mode locking")
+        self.recurrence_options = RecurrenceOptions()
         self.map_family = tk.StringVar(value="Sine")
         self.gamma = tk.DoubleVar(value=1.0)
         self.navigation_mode = tk.StringVar(value="Rectangle zoom")
@@ -127,8 +129,12 @@ class ArnoldViewer:
             "Mode locking",
             "Mode locking",
             "Rotation number",
+            *EXPLORER_MODES,
             command=lambda _: self._change_display_mode(),
         ).pack(side=tk.LEFT)
+        ttk.Button(controls, text="Recurrence…", command=self._set_recurrence).pack(
+            side=tk.LEFT, padx=3
+        )
         ttk.Label(controls, text="Gamma").pack(side=tk.LEFT, padx=(10, 2))
         self.gamma_scale = ttk.Scale(
             controls,
@@ -179,6 +185,30 @@ class ArnoldViewer:
         )
         self.request_render()
 
+    def _set_recurrence(self) -> None:
+        tolerance = simpledialog.askfloat(
+            "Recurrence tolerance",
+            "Return distance (0–0.5):",
+            parent=self.root,
+            initialvalue=self.recurrence_options.tolerance,
+            minvalue=0.000001,
+            maxvalue=0.499999,
+        )
+        if tolerance is None:
+            return
+        steps = simpledialog.askinteger(
+            "Recurrence steps",
+            "Maximum return steps (2–10000):",
+            parent=self.root,
+            initialvalue=self.recurrence_options.max_steps,
+            minvalue=2,
+            maxvalue=10000,
+        )
+        if steps is None:
+            return
+        self.recurrence_options = RecurrenceOptions(tolerance, steps)
+        self.request_render()
+
     def _dimensions(self) -> tuple[int, int]:
         return max(2, self.canvas.winfo_width()), max(2, self.canvas.winfo_height())
 
@@ -202,6 +232,7 @@ class ArnoldViewer:
         palette, gamma = self.palette.get(), self.gamma.get()
         display_mode = self.display_mode.get()
         family = self.map_family.get()
+        recurrence = self.recurrence_options
         self.status.set(
             f"Rendering preview…  Ω [{view.omega_min:.3f}, {view.omega_max:.3f}] "
             f"K [{view.coupling_min:.3f}, {view.coupling_max:.3f}] "
@@ -223,7 +254,10 @@ class ArnoldViewer:
                         labels = locking_field(view, rw, rh, settings)
                         rgb = colorize_locking(labels, palette)
                     else:
-                        rgb = render_rgb(
+                        renderer = (
+                            render_explorer_rgb if display_mode in EXPLORER_MODES else render_rgb
+                        )
+                        rgb = renderer(
                             view,
                             rw,
                             rh,
@@ -231,6 +265,11 @@ class ArnoldViewer:
                             palette=palette,
                             gamma=gamma,
                             family=family,
+                            **(
+                                {"mode": display_mode, "recurrence": recurrence}
+                                if display_mode in EXPLORER_MODES
+                                else {}
+                            ),
                         )
                     image = Image.fromarray(rgb)
                     if (rw, rh) != (width, height):
@@ -289,6 +328,7 @@ class ArnoldViewer:
         palette, gamma = self.palette.get(), self.gamma.get()
         display_mode = self.display_mode.get()
         family = self.map_family.get()
+        recurrence = self.recurrence_options
         filename = suggested_filename(
             mode=display_mode,
             palette=palette,
@@ -300,7 +340,10 @@ class ArnoldViewer:
             coupling_min=view.coupling_min,
             coupling_max=view.coupling_max,
         )
-        filename = filename.removesuffix(".png") + f"_{family.lower()}.png"
+        filename = filename.removesuffix(".png") + f"_{family.lower()}"
+        if display_mode == "Poincare recurrence":
+            filename += f"_eps{recurrence.tolerance:.4f}_max{recurrence.max_steps}"
+        filename += ".png"
         path = filedialog.asksaveasfilename(
             title="Export Arnold tongue image",
             initialfile=filename,
@@ -321,7 +364,8 @@ class ArnoldViewer:
                 if display_mode == "Mode locking":
                     rgb = colorize_locking(locking_field(view, width, height, settings), palette)
                 else:
-                    rgb = render_rgb(
+                    renderer = render_explorer_rgb if display_mode in EXPLORER_MODES else render_rgb
+                    rgb = renderer(
                         view,
                         width,
                         height,
@@ -329,6 +373,11 @@ class ArnoldViewer:
                         palette=palette,
                         gamma=gamma,
                         family=family,
+                        **(
+                            {"mode": display_mode, "recurrence": recurrence}
+                            if display_mode in EXPLORER_MODES
+                            else {}
+                        ),
                     )
                 save_image(rgb, path)
                 self._results.put((None, "export", None, str(path)))
@@ -396,6 +445,7 @@ class ArnoldViewer:
         view, settings = self.view, self.settings
         palette, gamma, mode = self.palette.get(), self.gamma.get(), self.display_mode.get()
         family = self.map_family.get()
+        recurrence = self.recurrence_options
         filename = suggested_filename(
             mode=mode,
             palette=palette,
@@ -414,6 +464,10 @@ class ArnoldViewer:
             f"_seed{options.seed if options.motion == 'Random Walk' else 0}"
             f"_{options.frames}f.gif"
         )
+        if mode == "Poincare recurrence":
+            filename = filename.removesuffix(".gif") + (
+                f"_eps{recurrence.tolerance:.4f}_max{recurrence.max_steps}.gif"
+            )
         path = filedialog.asksaveasfilename(
             title="Export zoom animation",
             initialfile=filename,
@@ -434,6 +488,7 @@ class ArnoldViewer:
                     mode=mode,
                     gamma=gamma,
                     family=family,
+                    recurrence=recurrence,
                     options=options,
                     on_progress=lambda n, total: self._results.put(
                         (None, "animation-progress", None, f"{n}/{total}")

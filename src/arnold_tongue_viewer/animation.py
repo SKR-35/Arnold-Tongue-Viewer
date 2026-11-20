@@ -11,6 +11,7 @@ import numpy as np
 from PIL import Image
 
 from .core import CircleMapSettings
+from .explorer import EXPLORER_MODES, RecurrenceOptions, render_explorer_rgb
 from .locking import colorize_locking, locking_field
 from .render import Viewport, render_rgb
 
@@ -93,11 +94,25 @@ def render_animation_frame(
     mode: str,
     gamma: float,
     family: str = "Sine",
+    recurrence: RecurrenceOptions | None = None,
 ) -> Image.Image:
+    recurrence = recurrence if recurrence is not None else RecurrenceOptions()
     if mode == "Mode locking":
         if family != "Sine":
             raise ValueError("Mode locking currently supports only the Sine family")
         rgb = colorize_locking(locking_field(view, width, height, settings), palette)
+    elif mode in EXPLORER_MODES:
+        rgb = render_explorer_rgb(
+            view,
+            width,
+            height,
+            settings,
+            palette=palette,
+            gamma=gamma,
+            family=family,
+            mode=mode,
+            recurrence=recurrence,
+        )
     elif mode == "Rotation number":
         rgb = render_rgb(view, width, height, settings, palette=palette, gamma=gamma, family=family)
     else:
@@ -114,16 +129,20 @@ def save_zoom_gif(
     mode: str,
     gamma: float,
     family: str = "Sine",
+    recurrence: RecurrenceOptions | None = None,
     options: AnimationOptions = AnimationOptions(),
     on_progress: Callable[[int, int], None] | None = None,
 ) -> Path:
     """Render genuine parameter-space zoom frames and write an animated GIF."""
+    recurrence = recurrence if recurrence is not None else RecurrenceOptions()
     path = Path(destination)
     if path.suffix.lower() != ".gif":
         raise ValueError("Animation export requires a .gif filename")
     images = []
     for index, frame_view in enumerate(animation_viewports(view, options), start=1):
         frame_kwargs = {"family": family} if family != "Sine" else {}
+        if mode == "Poincare recurrence":
+            frame_kwargs["recurrence"] = recurrence
         frame = render_animation_frame(
             frame_view,
             settings,
