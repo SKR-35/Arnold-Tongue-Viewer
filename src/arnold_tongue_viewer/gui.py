@@ -6,12 +6,13 @@ import queue
 import tkinter as tk
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
 import numpy as np
 from PIL import Image, ImageTk
 
 from .core import HAS_NUMBA, CircleMapSettings
+from .export import save_image
 from .locking import colorize_locking, locking_field
 from .palettes import PALETTES
 from .render import Viewport, render_rgb
@@ -125,12 +126,17 @@ class ArnoldViewer:
             variable=self.gamma,
             command=lambda _: self._schedule_render(),
             length=120,
-        ).pack(side=tk.LEFT)
+        )
+        self.gamma_scale.pack(side=tk.LEFT)
+        self.gamma_scale.state(["disabled"])
         ttk.Label(controls, text="Transient").pack(side=tk.LEFT, padx=(10, 2))
         ttk.Entry(controls, textvariable=self.transient, width=6).pack(side=tk.LEFT)
         ttk.Label(controls, text="Samples").pack(side=tk.LEFT, padx=(10, 2))
         ttk.Entry(controls, textvariable=self.samples, width=6).pack(side=tk.LEFT)
         ttk.Button(controls, text="Apply", command=self._apply_settings).pack(side=tk.LEFT, padx=5)
+        ttk.Button(controls, text="Export image", command=self._export_image).pack(
+            side=tk.LEFT, padx=5
+        )
 
         self.canvas = tk.Canvas(self.root, background="#07151b", highlightthickness=0)
         self.canvas.pack(fill=tk.BOTH, expand=True)
@@ -214,6 +220,12 @@ class ArnoldViewer:
             return
         while not self._results.empty():
             generation, quality, image, error = self._results.get()
+            if generation is None:
+                if quality == "export":
+                    self.status.set(f"Image saved: {error}")
+                else:
+                    self.status.set(f"Export failed: {error}")
+                continue
             if generation != self._generation:
                 continue
             if error:
@@ -239,6 +251,34 @@ class ArnoldViewer:
             messagebox.showerror("Invalid iterations", str(exc))
             return
         self.request_render()
+
+    def _export_image(self) -> None:
+        """Export the current view using the actual viewport and display mode."""
+        path = filedialog.asksaveasfilename(
+            title="Export Arnold tongue image",
+            defaultextension=".png",
+            filetypes=[("PNG image", "*.png"), ("JPEG image", "*.jpg"), ("JPEG image", "*.jpeg")],
+        )
+        if not path:
+            return
+        width, height = self._dimensions()
+        view, settings = self.view, self.settings
+        palette, gamma = self.palette.get(), self.gamma.get()
+        display_mode = self.display_mode.get()
+        self.status.set("Exporting image…")
+
+        def work() -> None:
+            try:
+                if display_mode == "Mode locking":
+                    rgb = colorize_locking(locking_field(view, width, height, settings), palette)
+                else:
+                    rgb = render_rgb(view, width, height, settings, palette=palette, gamma=gamma)
+                save_image(rgb, path)
+                self._results.put((None, "export", None, str(path)))
+            except Exception as exc:
+                self._results.put((None, "export-error", None, str(exc)))
+
+        self._executor.submit(work)
 
     def _zoom(self, factor: float) -> None:
         self._zoom_at(factor, *[v / 2 for v in self._dimensions()])
