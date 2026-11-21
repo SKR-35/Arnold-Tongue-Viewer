@@ -214,41 +214,51 @@ class ArnoldViewer:
         self.request_render()
 
     def _open_bifurcation(self) -> None:
-        """Independent K-versus-phase diagram; parameter-plane viewport is preserved."""
+        """Independent bifurcation explorer with rectangle zoom and pan."""
         window = tk.Toplevel(self.root)
-        window.title("Bifurcation Diagram · K vs phase")
-        window.geometry("900x650")
-        panel = ttk.Frame(window, padding=6)
+        window.title("Bifurcation Explorer · K vs phase")
+        window.geometry("1000x700")
+        panel = ttk.Frame(window, padding=5)
         panel.pack(fill=tk.X)
         omega = tk.StringVar(value="0.35")
-        maximum = tk.StringVar(value="4.0")
         transient = tk.StringVar(value="400")
         samples = tk.StringVar(value="240")
         family = tk.StringVar(value=self.map_family.get())
-        for name, variable, width in (
-            ("Ω", omega, 7),
-            ("K max", maximum, 7),
-            ("Transient", transient, 7),
-            ("Samples", samples, 7),
-        ):
-            ttk.Label(panel, text=name).pack(side=tk.LEFT, padx=(5, 2))
-            ttk.Entry(panel, textvariable=variable, width=width).pack(side=tk.LEFT)
-        ttk.OptionMenu(panel, family, family.get(), *MAP_FAMILIES).pack(side=tk.LEFT, padx=5)
-        canvas = tk.Canvas(window, background="#060817", highlightthickness=0)
-        canvas.pack(fill=tk.BOTH, expand=True)
-        status = tk.StringVar(value="K on horizontal axis · phase on vertical axis")
-        ttk.Label(window, textvariable=status, padding=5).pack(fill=tk.X)
+        palette = tk.StringVar(value="Classic")
+        navigation = tk.StringVar(value="Rectangle zoom")
+        current = [BifurcationOptions()]
         image_ref: list[ImageTk.PhotoImage] = []
         last_image: list[Image.Image] = []
-        last_params: list[tuple[BifurcationOptions, str]] = []
+        last_params: list[tuple[BifurcationOptions, str, str]] = []
         jobs: queue.SimpleQueue = queue.SimpleQueue()
         generation = [0]
         closed = [False]
+        drag: list[tuple[int, int]] = []
+        selection: list[int] = []
+        status = tk.StringVar(value="Drag a rectangle to zoom · switch to Pan to move")
+
+        def field(label: str, variable: tk.StringVar) -> None:
+            ttk.Label(panel, text=label).pack(side=tk.LEFT, padx=(4, 1))
+            ttk.Entry(panel, textvariable=variable, width=6).pack(side=tk.LEFT)
+
+        field("Ω", omega)
+        field("Transient", transient)
+        field("Samples", samples)
+        ttk.OptionMenu(panel, family, family.get(), *MAP_FAMILIES).pack(side=tk.LEFT, padx=3)
+        ttk.OptionMenu(panel, palette, palette.get(), "Classic", *PALETTES).pack(
+            side=tk.LEFT, padx=3
+        )
+        ttk.OptionMenu(panel, navigation, navigation.get(), "Rectangle zoom", "Pan").pack(
+            side=tk.LEFT, padx=3
+        )
+        canvas = tk.Canvas(window, background="#060817", highlightthickness=0)
+        canvas.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(window, textvariable=status, padding=5).pack(fill=tk.X)
 
         def options_from_fields() -> BifurcationOptions:
-            return BifurcationOptions(
+            return replace(
+                current[0],
                 omega=float(omega.get()),
-                k_max=float(maximum.get()),
                 transient=int(transient.get()),
                 samples=int(samples.get()),
             )
@@ -256,10 +266,11 @@ class ArnoldViewer:
         def draw() -> None:
             try:
                 opts = options_from_fields()
-                selected_family = family.get()
+                selected_family, selected_palette = family.get(), palette.get()
             except ValueError as exc:
                 messagebox.showerror("Invalid bifurcation parameters", str(exc), parent=window)
                 return
+            current[0] = opts
             generation[0] += 1
             job = generation[0]
             width, height = max(2, canvas.winfo_width()), max(2, canvas.winfo_height())
@@ -268,11 +279,13 @@ class ArnoldViewer:
             def work() -> None:
                 try:
                     result = Image.fromarray(
-                        render_bifurcation(width, height, opts, family=selected_family)
+                        render_bifurcation(
+                            width, height, opts, family=selected_family, palette=selected_palette
+                        )
                     )
-                    jobs.put((job, result, None, opts, selected_family))
+                    jobs.put((job, result, None, opts, selected_family, selected_palette))
                 except Exception as exc:
-                    jobs.put((job, None, str(exc), opts, selected_family))
+                    jobs.put((job, None, str(exc), opts, selected_family, selected_palette))
 
             self._executor.submit(work)
 
@@ -280,29 +293,110 @@ class ArnoldViewer:
             if closed[0]:
                 return
             while not jobs.empty():
-                job, result, error, opts, selected_family = jobs.get()
+                job, result, error, opts, selected_family, selected_palette = jobs.get()
                 if job != generation[0]:
                     continue
                 if error is not None:
                     status.set(f"Bifurcation render failed: {error}")
                 elif result is not None:
                     last_image[:] = [result]
-                    last_params[:] = [(opts, selected_family)]
+                    last_params[:] = [(opts, selected_family, selected_palette)]
                     image_ref[:] = [ImageTk.PhotoImage(result)]
                     canvas.delete("all")
                     canvas.create_image(0, 0, anchor="nw", image=image_ref[0])
-                    status.set("Ready · K increases left to right · phase 1 at top, 0 at bottom")
+                    status.set(
+                        f"K [{opts.k_min:.3f}, {opts.k_max:.3f}] · "
+                        f"phase [{opts.phase_min:.3f}, {opts.phase_max:.3f}]"
+                    )
             window.after(80, poll)
 
+        def apply_rectangle(start: tuple[int, int], end: tuple[int, int]) -> None:
+            width, height = canvas.winfo_width(), canvas.winfo_height()
+            if width < 2 or height < 2:
+                return
+            x0, x1 = sorted((max(0, min(width, start[0])), max(0, min(width, end[0]))))
+            y0, y1 = sorted((max(0, min(height, start[1])), max(0, min(height, end[1]))))
+            if x1 - x0 < 5 or y1 - y0 < 5:
+                return
+            opts = current[0]
+            kspan = opts.k_max - opts.k_min
+            pspan = opts.phase_max - opts.phase_min
+            current[0] = replace(
+                opts,
+                k_min=opts.k_min + kspan * x0 / width,
+                k_max=opts.k_min + kspan * x1 / width,
+                phase_min=opts.phase_max - pspan * y1 / height,
+                phase_max=opts.phase_max - pspan * y0 / height,
+            )
+            draw()
+
+        def mouse_down(event: tk.Event) -> None:
+            drag[:] = [(event.x, event.y)]
+            if selection:
+                canvas.delete(selection.pop())
+
+        def mouse_move(event: tk.Event) -> None:
+            if not drag or navigation.get() != "Rectangle zoom":
+                return
+            if selection:
+                canvas.delete(selection.pop())
+            selection.append(
+                canvas.create_rectangle(
+                    *drag[0], event.x, event.y, outline="white", dash=(4, 3), width=2
+                )
+            )
+
+        def mouse_up(event: tk.Event) -> None:
+            if not drag:
+                return
+            start = drag.pop()
+            if selection:
+                canvas.delete(selection.pop())
+            if navigation.get() == "Rectangle zoom":
+                apply_rectangle(start, (event.x, event.y))
+                return
+            width, height = canvas.winfo_width(), canvas.winfo_height()
+            opts = current[0]
+            dk = (event.x - start[0]) / width * (opts.k_max - opts.k_min)
+            dp = (event.y - start[1]) / height * (opts.phase_max - opts.phase_min)
+            kmin, kmax = opts.k_min - dk, opts.k_max - dk
+            pmin, pmax = opts.phase_min + dp, opts.phase_max + dp
+            # Keep the phase viewport within [0, 1].
+            if pmin < 0:
+                pmax -= pmin
+                pmin = 0
+            if pmax > 1:
+                pmin -= pmax - 1
+                pmax = 1
+            current[0] = replace(opts, k_min=kmin, k_max=kmax, phase_min=pmin, phase_max=pmax)
+            draw()
+
+        def reset() -> None:
+            current[0] = BifurcationOptions(
+                omega=float(omega.get()), transient=int(transient.get()), samples=int(samples.get())
+            )
+            draw()
+
+        def preset(name: str) -> None:
+            presets = {
+                "Overview": (0.35, 0.0, 4.0),
+                "Fine structure": (0.35, 1.7, 2.5),
+                "High coupling": (0.35, 2.7, 4.0),
+            }
+            om, lo, hi = presets[name]
+            omega.set(str(om))
+            current[0] = replace(current[0], k_min=lo, k_max=hi, phase_min=0.0, phase_max=1.0)
+            draw()
+
         def export() -> None:
-            if not last_image:
+            if not last_params:
                 messagebox.showinfo("Not ready", "Render a diagram first", parent=window)
                 return
-            opts, rendered_family = last_params[0]
+            opts, rendered_family, rendered_palette = last_params[0]
             filename = (
-                f"bifurcation_{rendered_family.lower()}_omega{opts.omega:.3f}"
-                f"_k{opts.k_min:.2f}-{opts.k_max:.2f}"
-                f"_t{opts.transient}_s{opts.samples}.png"
+                f"bifurcation_{rendered_family.lower()}_{rendered_palette.lower()}"
+                f"_omega{opts.omega:.3f}_k{opts.k_min:.3f}-{opts.k_max:.3f}"
+                f"_phase{opts.phase_min:.3f}-{opts.phase_max:.3f}.png"
             )
             path = filedialog.asksaveasfilename(
                 parent=window,
@@ -310,12 +404,33 @@ class ArnoldViewer:
                 defaultextension=".png",
                 filetypes=[("PNG", "*.png"), ("JPEG", "*.jpg")],
             )
-            if path:
-                last_image[0].save(path)
-                status.set(f"Saved: {path}")
+            if not path:
+                return
+            try:
+                # Re-render at export resolution, not merely upscale the preview.
+                opts, rendered_family, rendered_palette = last_params[0]
+                image = Image.fromarray(
+                    render_bifurcation(
+                        1920, 1080, opts, family=rendered_family, palette=rendered_palette
+                    )
+                )
+                image.save(path)
+                status.set(f"Saved 1920 × 1080: {path}")
+            except Exception as exc:
+                messagebox.showerror("Export failed", str(exc), parent=window)
 
-        ttk.Button(panel, text="Render", command=draw).pack(side=tk.LEFT, padx=5)
-        ttk.Button(panel, text="Export image", command=export).pack(side=tk.LEFT)
+        ttk.Button(panel, text="Render", command=draw).pack(side=tk.LEFT, padx=3)
+        ttk.Button(panel, text="Reset", command=reset).pack(side=tk.LEFT)
+        ttk.Button(panel, text="Export HD", command=export).pack(side=tk.LEFT, padx=3)
+        presets = ttk.Frame(window, padding=(6, 0, 6, 5))
+        presets.pack(fill=tk.X, before=canvas)
+        for name in ("Overview", "Fine structure", "High coupling"):
+            ttk.Button(presets, text=name, command=lambda n=name: preset(n)).pack(
+                side=tk.LEFT, padx=3
+            )
+        canvas.bind("<ButtonPress-1>", mouse_down)
+        canvas.bind("<B1-Motion>", mouse_move)
+        canvas.bind("<ButtonRelease-1>", mouse_up)
 
         def close() -> None:
             closed[0] = True
