@@ -248,7 +248,3 @@ These references provide mathematical background and visual inspiration. The pro
 ## License
 
 Licensed under the **Apache License, Version 2.0**.
-
-## Contributing
-
-Bug reports, reproducible numerical examples and improvements to the rendering pipeline are welcome through GitHub issues and pull requests. When reporting a rendering issue, include the map family, visualization mode, parameter bounds, numerical settings and steps needed to reproduce the result.
