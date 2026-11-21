@@ -7,9 +7,9 @@ from arnold_tongue_viewer.palettes import PALETTES
 from arnold_tongue_viewer.reference_gallery import REFERENCE_PRESETS, get_reference_preset
 
 
-def test_ten_unique_presets():
-    assert len(REFERENCE_PRESETS) == 10
-    assert len({p.label for p in REFERENCE_PRESETS}) == 10
+def test_sixteen_unique_presets():
+    assert len(REFERENCE_PRESETS) == 16
+    assert len({p.label for p in REFERENCE_PRESETS}) == 16
 
 
 @pytest.mark.parametrize("preset", REFERENCE_PRESETS, ids=lambda p: p.label)
@@ -42,3 +42,20 @@ def test_startup_showcase_matches_gallery():
     assert showcase.view == __import__(
         "arnold_tongue_viewer.render", fromlist=["Viewport"]
     ).Viewport(0, 1, 0, 3.0)
+
+
+def test_new_presets_cover_distinct_observables_and_families():
+    new = REFERENCE_PRESETS[10:]
+    assert len(new) == 6
+    assert {p.family for p in new} == {"Sine", "Triangle", "Sawtooth"}
+    assert {p.mode for p in new} == {"Classic winding", "Poincare recurrence", "Recurrence order q"}
+    assert len({p.palette for p in new}) == 6
+    assert all(p.note for p in new)
+
+
+def test_startup_preset_has_explicit_extended_view():
+    from arnold_tongue_viewer.render import Viewport
+
+    preset = get_reference_preset("06 · Rainbow Showcase · Classic winding")
+    assert preset.view == Viewport(0, 1, 0, 3.0)
+    assert preset.gamma == 0.9
