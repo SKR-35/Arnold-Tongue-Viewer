@@ -16,7 +16,7 @@ The viewer is designed for mathematical exploration, computational art and learn
 
 The Arnold Tongue Viewer provides an interactive desktop interface for exploring nonlinear dynamics through numerical visualization.
 
-![Arnold Tongue Viewer — Desktop Interface](assets/UI_1.png)
+![Arnold Tongue Viewer — Desktop Interface](assets/UI_1.jpg)
 
 *Interactive visualization of the circle map using the Classic Winding mode.*
 
