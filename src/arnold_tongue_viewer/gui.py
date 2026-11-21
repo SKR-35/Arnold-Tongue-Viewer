@@ -12,6 +12,7 @@ import numpy as np
 from PIL import Image, ImageTk
 
 from .animation import AnimationOptions, save_zoom_gif
+from .bifurcation import BifurcationOptions, render_bifurcation
 from .core import HAS_NUMBA, CircleMapSettings
 from .explorer import EXPLORER_MODES, RecurrenceOptions, render_explorer_rgb
 from .export import save_image, suggested_filename
@@ -132,6 +133,9 @@ class ArnoldViewer:
             *EXPLORER_MODES,
             command=lambda _: self._change_display_mode(),
         ).pack(side=tk.LEFT)
+        ttk.Button(controls, text="Bifurcation…", command=self._open_bifurcation).pack(
+            side=tk.LEFT, padx=3
+        )
         ttk.Button(controls, text="Recurrence…", command=self._set_recurrence).pack(
             side=tk.LEFT, padx=3
         )
@@ -208,6 +212,119 @@ class ArnoldViewer:
             return
         self.recurrence_options = RecurrenceOptions(tolerance, steps)
         self.request_render()
+
+    def _open_bifurcation(self) -> None:
+        """Independent K-versus-phase diagram; parameter-plane viewport is preserved."""
+        window = tk.Toplevel(self.root)
+        window.title("Bifurcation Diagram · K vs phase")
+        window.geometry("900x650")
+        panel = ttk.Frame(window, padding=6)
+        panel.pack(fill=tk.X)
+        omega = tk.StringVar(value="0.35")
+        maximum = tk.StringVar(value="4.0")
+        transient = tk.StringVar(value="400")
+        samples = tk.StringVar(value="240")
+        family = tk.StringVar(value=self.map_family.get())
+        for name, variable, width in (
+            ("Ω", omega, 7),
+            ("K max", maximum, 7),
+            ("Transient", transient, 7),
+            ("Samples", samples, 7),
+        ):
+            ttk.Label(panel, text=name).pack(side=tk.LEFT, padx=(5, 2))
+            ttk.Entry(panel, textvariable=variable, width=width).pack(side=tk.LEFT)
+        ttk.OptionMenu(panel, family, family.get(), *MAP_FAMILIES).pack(side=tk.LEFT, padx=5)
+        canvas = tk.Canvas(window, background="#060817", highlightthickness=0)
+        canvas.pack(fill=tk.BOTH, expand=True)
+        status = tk.StringVar(value="K on horizontal axis · phase on vertical axis")
+        ttk.Label(window, textvariable=status, padding=5).pack(fill=tk.X)
+        image_ref: list[ImageTk.PhotoImage] = []
+        last_image: list[Image.Image] = []
+        last_params: list[tuple[BifurcationOptions, str]] = []
+        jobs: queue.SimpleQueue = queue.SimpleQueue()
+        generation = [0]
+        closed = [False]
+
+        def options_from_fields() -> BifurcationOptions:
+            return BifurcationOptions(
+                omega=float(omega.get()),
+                k_max=float(maximum.get()),
+                transient=int(transient.get()),
+                samples=int(samples.get()),
+            )
+
+        def draw() -> None:
+            try:
+                opts = options_from_fields()
+                selected_family = family.get()
+            except ValueError as exc:
+                messagebox.showerror("Invalid bifurcation parameters", str(exc), parent=window)
+                return
+            generation[0] += 1
+            job = generation[0]
+            width, height = max(2, canvas.winfo_width()), max(2, canvas.winfo_height())
+            status.set("Computing bifurcation diagram…")
+
+            def work() -> None:
+                try:
+                    result = Image.fromarray(
+                        render_bifurcation(width, height, opts, family=selected_family)
+                    )
+                    jobs.put((job, result, None, opts, selected_family))
+                except Exception as exc:
+                    jobs.put((job, None, str(exc), opts, selected_family))
+
+            self._executor.submit(work)
+
+        def poll() -> None:
+            if closed[0]:
+                return
+            while not jobs.empty():
+                job, result, error, opts, selected_family = jobs.get()
+                if job != generation[0]:
+                    continue
+                if error is not None:
+                    status.set(f"Bifurcation render failed: {error}")
+                elif result is not None:
+                    last_image[:] = [result]
+                    last_params[:] = [(opts, selected_family)]
+                    image_ref[:] = [ImageTk.PhotoImage(result)]
+                    canvas.delete("all")
+                    canvas.create_image(0, 0, anchor="nw", image=image_ref[0])
+                    status.set("Ready · K increases left to right · phase 1 at top, 0 at bottom")
+            window.after(80, poll)
+
+        def export() -> None:
+            if not last_image:
+                messagebox.showinfo("Not ready", "Render a diagram first", parent=window)
+                return
+            opts, rendered_family = last_params[0]
+            filename = (
+                f"bifurcation_{rendered_family.lower()}_omega{opts.omega:.3f}"
+                f"_k{opts.k_min:.2f}-{opts.k_max:.2f}"
+                f"_t{opts.transient}_s{opts.samples}.png"
+            )
+            path = filedialog.asksaveasfilename(
+                parent=window,
+                initialfile=filename,
+                defaultextension=".png",
+                filetypes=[("PNG", "*.png"), ("JPEG", "*.jpg")],
+            )
+            if path:
+                last_image[0].save(path)
+                status.set(f"Saved: {path}")
+
+        ttk.Button(panel, text="Render", command=draw).pack(side=tk.LEFT, padx=5)
+        ttk.Button(panel, text="Export image", command=export).pack(side=tk.LEFT)
+
+        def close() -> None:
+            closed[0] = True
+            generation[0] += 1
+            window.destroy()
+
+        window.protocol("WM_DELETE_WINDOW", close)
+        window.after(80, poll)
+        window.after(200, draw)
 
     def _dimensions(self) -> tuple[int, int]:
         return max(2, self.canvas.winfo_width()), max(2, self.canvas.winfo_height())
