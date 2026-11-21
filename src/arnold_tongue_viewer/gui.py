@@ -24,6 +24,7 @@ from .export import save_image, suggested_filename
 from .locking import colorize_locking, locking_field
 from .map_families import MAP_FAMILIES
 from .palettes import PALETTES
+from .reference_gallery import REFERENCE_PRESETS, get_reference_preset
 from .render import Viewport, render_rgb
 
 
@@ -141,6 +142,9 @@ class ArnoldViewer:
         ttk.Button(controls, text="Bifurcation…", command=self._open_bifurcation).pack(
             side=tk.LEFT, padx=3
         )
+        ttk.Button(controls, text="Gallery…", command=self._open_reference_gallery).pack(
+            side=tk.LEFT, padx=3
+        )
         ttk.Button(controls, text="Recurrence…", command=self._set_recurrence).pack(
             side=tk.LEFT, padx=3
         )
@@ -217,6 +221,62 @@ class ArnoldViewer:
             return
         self.recurrence_options = RecurrenceOptions(tolerance, steps)
         self.request_render()
+
+    def _open_reference_gallery(self) -> None:
+        """Choose a reproducible reference-inspired setup, without overwriting user exports."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Reference Gallery · exploratory presets")
+        dialog.geometry("610x310")
+        dialog.transient(self.root)
+        ttk.Label(
+            dialog,
+            text="Reference-inspired presets (not pixel-exact reconstructions)",
+            padding=12,
+        ).pack(anchor=tk.W)
+        choice = tk.StringVar(value=REFERENCE_PRESETS[1].label)
+        selector = ttk.Combobox(
+            dialog,
+            textvariable=choice,
+            state="readonly",
+            values=[preset.label for preset in REFERENCE_PRESETS],
+            width=38,
+        )
+        selector.pack(anchor=tk.W, padx=12)
+        description = tk.StringVar()
+        ttk.Label(dialog, textvariable=description, wraplength=560, padding=12).pack(
+            anchor=tk.W, fill=tk.X
+        )
+
+        def update_note(_event: object | None = None) -> None:
+            description.set(get_reference_preset(choice.get()).note)
+
+        def apply_preset() -> None:
+            preset = get_reference_preset(choice.get())
+            if preset.mode == "Bifurcation":
+                dialog.destroy()
+                self._open_bifurcation()
+                return
+            self.view = preset.view
+            self.map_family.set(preset.family)
+            self.display_mode.set(preset.mode)
+            self.palette.set(preset.palette)
+            self.gamma.set(preset.gamma)
+            self.settings = CircleMapSettings(
+                transient=preset.transient,
+                samples=preset.samples,
+                theta0=self.settings.theta0,
+            )
+            self.transient.set(str(preset.transient))
+            self.samples.set(str(preset.samples))
+            self.recurrence_options = preset.recurrence
+            dialog.destroy()
+            self._change_display_mode()
+
+        selector.bind("<<ComboboxSelected>>", update_note)
+        update_note()
+        ttk.Button(dialog, text="Apply preset", command=apply_preset).pack(
+            anchor=tk.W, padx=12, pady=8
+        )
 
     def _open_bifurcation(self) -> None:
         """Independent bifurcation explorer with rectangle zoom and pan."""
