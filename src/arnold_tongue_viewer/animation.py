@@ -141,7 +141,7 @@ def save_zoom_gif(
     images = []
     for index, frame_view in enumerate(animation_viewports(view, options), start=1):
         frame_kwargs = {"family": family} if family != "Sine" else {}
-        if mode == "Poincare recurrence":
+        if mode in ("Poincare recurrence", "Recurrence order q"):
             frame_kwargs["recurrence"] = recurrence
         frame = render_animation_frame(
             frame_view,

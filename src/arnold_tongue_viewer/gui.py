@@ -84,7 +84,7 @@ class ArnoldViewer:
         self.root.geometry("1100x750")
         self.view = Viewport()
         self.settings = CircleMapSettings(transient=250, samples=550)
-        self.palette = tk.StringVar(value="turbo")
+        self.palette = tk.StringVar(value="Yikique")
         self.display_mode = tk.StringVar(value="Classic winding")
         self.recurrence_options = RecurrenceOptions()
         self.map_family = tk.StringVar(value="Sine")
@@ -119,7 +119,7 @@ class ArnoldViewer:
         ).pack(side=tk.LEFT)
         ttk.Label(controls, text="Palette").pack(side=tk.LEFT)
         ttk.OptionMenu(
-            controls, self.palette, "turbo", *PALETTES, command=lambda _: self.request_render()
+            controls, self.palette, "Yikique", *PALETTES, command=lambda _: self.request_render()
         ).pack(side=tk.LEFT)
         ttk.Label(controls, text="Map").pack(side=tk.LEFT, padx=(10, 2))
         ttk.OptionMenu(
@@ -746,7 +746,7 @@ class ArnoldViewer:
             coupling_max=view.coupling_max,
         )
         filename = filename.removesuffix(".png") + f"_{family.lower()}"
-        if display_mode == "Poincare recurrence":
+        if display_mode in ("Poincare recurrence", "Recurrence order q"):
             filename += f"_eps{recurrence.tolerance:.4f}_max{recurrence.max_steps}"
         filename += ".png"
         path = filedialog.asksaveasfilename(
@@ -869,7 +869,7 @@ class ArnoldViewer:
             f"_seed{options.seed if options.motion == 'Random Walk' else 0}"
             f"_{options.frames}f.gif"
         )
-        if mode == "Poincare recurrence":
+        if mode in ("Poincare recurrence", "Recurrence order q"):
             filename = filename.removesuffix(".gif") + (
                 f"_eps{recurrence.tolerance:.4f}_max{recurrence.max_steps}.gif"
             )

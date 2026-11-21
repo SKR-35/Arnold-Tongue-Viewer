@@ -8,7 +8,20 @@ import numpy as np
 # Named matplotlib palettes are sampled into discrete RGB stops at import time.
 CUSTOM_STOPS = {
     "Jade": ("#020b08", "#073b2a", "#0b6b4f", "#13a777", "#62d6a7", "#d8fff0"),
-    "Yikique": ("#090b22", "#35327e", "#7e4cb3", "#db71ae", "#f8b98a", "#fff2c5"),
+    "Yikique": (
+        "#08051c",
+        "#25145c",
+        "#3435c4",
+        "#087bea",
+        "#00d5e9",
+        "#06e7a0",
+        "#8ff03b",
+        "#f9ec26",
+        "#ff9a22",
+        "#f43d54",
+        "#ad1b8d",
+        "#08051c",
+    ),
     "Pearl": ("#101214", "#34383d", "#6f747a", "#b8bcc1", "#ece9e2", "#fffdf7"),
     "SoftSunset": ("#2b1055", "#6a0572", "#ff6f91", "#ffc15e", "#ffe29a"),
     "EarthAndSky": ("#1a2a6c", "#28a0b0", "#84ffc9", "#f0f3bd", "#ffd166"),

@@ -11,7 +11,7 @@ from .map_families import MAP_FAMILIES, _forcing_scalar
 from .palettes import colorize
 from .render import Viewport, parameter_grid, rotation_field
 
-EXPLORER_MODES = ("Classic winding", "Poincare recurrence")
+EXPLORER_MODES = ("Classic winding", "Poincare recurrence", "Recurrence order q")
 
 
 @dataclass(frozen=True)
@@ -120,6 +120,16 @@ def render_explorer_rgb(
         times = recurrence_field(view, width, height, settings, family=family, options=recurrence)
         values = np.log1p(times.astype(float)) / np.log1p(recurrence.max_steps)
         rgb = colorize(values, palette=palette, gamma=gamma)
+        rgb[times == 0] = (5, 5, 15)
+        return rgb
+    if mode == "Recurrence order q":
+        # An exploratory q-proxy: the observed first-return step, not the
+        # original reference artwork's (unverified) q observable.
+        times = recurrence_field(view, width, height, settings, family=family, options=recurrence)
+        # Discrete q classes reveal return-time strata; unlike a continuous
+        # log scale, equal return orders receive equal colors.
+        bands = np.mod(times.astype(np.float64) * 0.6180339887498949, 1.0)
+        rgb = colorize(bands, palette=palette, gamma=gamma)
         rgb[times == 0] = (5, 5, 15)
         return rgb
     raise ValueError(f"Unknown explorer mode: {mode}")
