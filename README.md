@@ -1,3 +1,9 @@
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=blue)
+![GUI](https://img.shields.io/badge/GUI-Tkinter-blueviolet)
+![Computation](https://img.shields.io/badge/Computation-NumPy-013243?logo=numpy&logoColor=white)
+![Acceleration](https://img.shields.io/badge/Acceleration-Numba-00A3E0?logo=numba&logoColor=white)
+[![CI](https://img.shields.io/github/actions/workflow/status/SKR-35/Arnold-Tongue-Viewer/ci.yml?branch=master&label=CI&logo=githubactions&logoColor=white)](https://github.com/SKR-35/Arnold-Tongue-Viewer/actions/workflows/ci.yml)
+
 # Arnold Tongue Viewer
 
 **An interactive Python desktop explorer for circle maps, mode locking, winding numbers, recurrence structures and bifurcation diagrams.**
@@ -5,6 +11,22 @@
 Arnold Tongue Viewer turns the parameter space of periodically forced circle maps into an explorable image. Move across resonance regions, zoom into fine structures, compare forcing functions and export still images or animated GIFs. The application combines numerical computation with a lightweight Tkinter interface.
 
 The viewer is designed for mathematical exploration, computational art and learning about nonlinear dynamical systems. Its visualizations are calculated from iterated maps rather than generated from static image assets.
+
+## Application Preview
+
+The Arnold Tongue Viewer provides an interactive desktop interface for exploring nonlinear dynamics through numerical visualization.
+
+![Arnold Tongue Viewer — Desktop Interface](assets/UI_1.png)
+
+*Interactive visualization of the circle map using the Classic Winding mode.*
+
+## Visualization Showcase
+
+The viewer reveals intricate structures in the parameter space of nonlinear circle maps. Different palettes highlight the geometry of mode-locking regions and the surrounding dynamical behavior.
+
+![Arnold Tongue Visualization — Yikique Palette](assets/Yikique_1.png)
+
+*Parameter-space visualization rendered with the Yikique color palette.*
 
 ## Highlights
 
