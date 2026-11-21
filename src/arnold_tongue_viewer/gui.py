@@ -83,15 +83,15 @@ class ArnoldViewer:
         self.root.title("Arnold Tongue Viewer")
         self.root.geometry("1100x750")
         self.view = Viewport()
-        self.settings = CircleMapSettings(transient=100, samples=250)
-        self.palette = tk.StringVar(value="Yikique")
-        self.display_mode = tk.StringVar(value="Mode locking")
+        self.settings = CircleMapSettings(transient=250, samples=550)
+        self.palette = tk.StringVar(value="turbo")
+        self.display_mode = tk.StringVar(value="Classic winding")
         self.recurrence_options = RecurrenceOptions()
         self.map_family = tk.StringVar(value="Sine")
-        self.gamma = tk.DoubleVar(value=1.0)
+        self.gamma = tk.DoubleVar(value=0.9)
         self.navigation_mode = tk.StringVar(value="Rectangle zoom")
-        self.transient = tk.StringVar(value="100")
-        self.samples = tk.StringVar(value="250")
+        self.transient = tk.StringVar(value="250")
+        self.samples = tk.StringVar(value="550")
         self.status = tk.StringVar(value="Ready")
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="arnold-render")
         self._results: queue.SimpleQueue = queue.SimpleQueue()
@@ -119,7 +119,7 @@ class ArnoldViewer:
         ).pack(side=tk.LEFT)
         ttk.Label(controls, text="Palette").pack(side=tk.LEFT)
         ttk.OptionMenu(
-            controls, self.palette, "Yikique", *PALETTES, command=lambda _: self.request_render()
+            controls, self.palette, "turbo", *PALETTES, command=lambda _: self.request_render()
         ).pack(side=tk.LEFT)
         ttk.Label(controls, text="Map").pack(side=tk.LEFT, padx=(10, 2))
         ttk.OptionMenu(
@@ -133,7 +133,7 @@ class ArnoldViewer:
         ttk.OptionMenu(
             controls,
             self.display_mode,
-            "Mode locking",
+            "Classic winding",
             "Mode locking",
             "Rotation number",
             *EXPLORER_MODES,
@@ -158,16 +158,19 @@ class ArnoldViewer:
             length=120,
         )
         self.gamma_scale.pack(side=tk.LEFT)
-        self.gamma_scale.state(["disabled"])
+        self.gamma_scale.state(["!disabled"])
         ttk.Label(controls, text="Transient").pack(side=tk.LEFT, padx=(10, 2))
         ttk.Entry(controls, textvariable=self.transient, width=6).pack(side=tk.LEFT)
         ttk.Label(controls, text="Samples").pack(side=tk.LEFT, padx=(10, 2))
         ttk.Entry(controls, textvariable=self.samples, width=6).pack(side=tk.LEFT)
         ttk.Button(controls, text="Apply", command=self._apply_settings).pack(side=tk.LEFT, padx=5)
-        ttk.Button(controls, text="Export image", command=self._export_image).pack(
-            side=tk.LEFT, padx=5
+        # Keep exports on a dedicated row: they must remain accessible on narrow screens.
+        exports = ttk.Frame(self.root, padding=(6, 0, 6, 4))
+        exports.pack(fill=tk.X)
+        ttk.Button(exports, text="Export image", command=self._export_image).pack(
+            side=tk.LEFT, padx=(0, 5)
         )
-        ttk.Button(controls, text="Export GIF", command=self._export_gif).pack(side=tk.LEFT, padx=5)
+        ttk.Button(exports, text="Export GIF", command=self._export_gif).pack(side=tk.LEFT)
 
         self.canvas = tk.Canvas(self.root, background="#07151b", highlightthickness=0)
         self.canvas.pack(fill=tk.BOTH, expand=True)
@@ -226,7 +229,7 @@ class ArnoldViewer:
         """Choose a reproducible reference-inspired setup, without overwriting user exports."""
         dialog = tk.Toplevel(self.root)
         dialog.title("Reference Gallery · exploratory presets")
-        dialog.geometry("610x310")
+        dialog.geometry("650x340")
         dialog.transient(self.root)
         ttk.Label(
             dialog,

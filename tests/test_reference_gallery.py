@@ -7,9 +7,9 @@ from arnold_tongue_viewer.palettes import PALETTES
 from arnold_tongue_viewer.reference_gallery import REFERENCE_PRESETS, get_reference_preset
 
 
-def test_five_unique_presets():
-    assert len(REFERENCE_PRESETS) == 5
-    assert len({p.label for p in REFERENCE_PRESETS}) == 5
+def test_ten_unique_presets():
+    assert len(REFERENCE_PRESETS) == 10
+    assert len({p.label for p in REFERENCE_PRESETS}) == 10
 
 
 @pytest.mark.parametrize("preset", REFERENCE_PRESETS, ids=lambda p: p.label)
@@ -26,3 +26,14 @@ def test_preset_is_valid(preset):
 def test_unknown_preset_rejected():
     with pytest.raises(ValueError, match="Unknown reference preset"):
         get_reference_preset("missing")
+
+
+def test_startup_showcase_matches_gallery():
+    showcase = get_reference_preset("06 · Rainbow Showcase · Classic winding")
+    assert showcase.family == "Sine"
+    assert showcase.mode == "Classic winding"
+    assert showcase.palette == "turbo"
+    assert (showcase.transient, showcase.samples) == (250, 550)
+    assert showcase.view == __import__(
+        "arnold_tongue_viewer.render", fromlist=["Viewport"]
+    ).Viewport(0, 1, 0, 3.0)
