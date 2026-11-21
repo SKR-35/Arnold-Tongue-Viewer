@@ -12,7 +12,12 @@ import numpy as np
 from PIL import Image, ImageTk
 
 from .animation import AnimationOptions, save_zoom_gif
-from .bifurcation import BifurcationOptions, render_bifurcation
+from .bifurcation import (
+    BifurcationAnimationOptions,
+    BifurcationOptions,
+    render_bifurcation,
+    save_bifurcation_gif,
+)
 from .core import HAS_NUMBA, CircleMapSettings
 from .explorer import EXPLORER_MODES, RecurrenceOptions, render_explorer_rgb
 from .export import save_image, suggested_filename
@@ -235,6 +240,8 @@ class ArnoldViewer:
         closed = [False]
         drag: list[tuple[int, int]] = []
         selection: list[int] = []
+        resize_job: list[str | None] = [None]
+        gif_running = [False]
         status = tk.StringVar(value="Drag a rectangle to zoom · switch to Pan to move")
 
         def field(label: str, variable: tk.StringVar) -> None:
@@ -293,7 +300,20 @@ class ArnoldViewer:
             if closed[0]:
                 return
             while not jobs.empty():
-                job, result, error, opts, selected_family, selected_palette = jobs.get()
+                item = jobs.get()
+                if isinstance(item[0], str):
+                    if item[0] == "gif-progress":
+                        status.set(f"Rendering GIF frame {item[1]}/{item[2]}…")
+                    else:
+                        gif_running[0] = False
+                        gif_button.state(["!disabled"])
+                        if item[0] == "gif-done":
+                            status.set(f"GIF saved: {item[1]}")
+                        else:
+                            status.set(f"GIF export failed: {item[1]}")
+                            messagebox.showerror("GIF export failed", item[1], parent=window)
+                    continue
+                job, result, error, opts, selected_family, selected_palette = item
                 if job != generation[0]:
                     continue
                 if error is not None:
@@ -309,6 +329,91 @@ class ArnoldViewer:
                         f"phase [{opts.phase_min:.3f}, {opts.phase_max:.3f}]"
                     )
             window.after(80, poll)
+
+        def on_canvas_resize(event: tk.Event) -> None:
+            """Debounce resize to re-render at actual canvas dimensions."""
+            if closed[0] or event.width < 2 or event.height < 2:
+                return
+            if resize_job[0] is not None:
+                window.after_cancel(resize_job[0])
+            resize_job[0] = window.after(350, render_after_resize)
+
+        def render_after_resize() -> None:
+            resize_job[0] = None
+            if not closed[0]:
+                draw()
+
+        def export_gif() -> None:
+            if gif_running[0]:
+                return
+            try:
+                opts = options_from_fields()
+                start = simpledialog.askfloat(
+                    "GIF · Omega start",
+                    "Starting Ω:",
+                    parent=window,
+                    initialvalue=opts.omega - 0.15,
+                )
+                if start is None:
+                    return
+                end = simpledialog.askfloat(
+                    "GIF · Omega end",
+                    "Ending Ω:",
+                    parent=window,
+                    initialvalue=opts.omega + 0.15,
+                )
+                if end is None:
+                    return
+                count = simpledialog.askinteger(
+                    "GIF · Frames",
+                    "Number of frames (2–120):",
+                    parent=window,
+                    initialvalue=24,
+                    minvalue=2,
+                    maxvalue=120,
+                )
+                if count is None:
+                    return
+                animation = BifurcationAnimationOptions(
+                    omega_start=start,
+                    omega_end=end,
+                    frames=count,
+                )
+            except ValueError as exc:
+                messagebox.showerror("Invalid animation settings", str(exc), parent=window)
+                return
+            selected_family, selected_palette = family.get(), palette.get()
+            filename = (
+                f"bifurcation_{selected_family.lower()}_{selected_palette.lower()}"
+                f"_omega{start:.3f}-{end:.3f}_{count}f.gif"
+            )
+            path = filedialog.asksaveasfilename(
+                parent=window,
+                initialfile=filename,
+                defaultextension=".gif",
+                filetypes=[("Animated GIF", "*.gif")],
+            )
+            if not path:
+                return
+            gif_running[0] = True
+            gif_button.state(["disabled"])
+            status.set("Rendering bifurcation GIF…")
+
+            def work() -> None:
+                try:
+                    save_bifurcation_gif(
+                        path,
+                        opts,
+                        animation,
+                        family=selected_family,
+                        palette=selected_palette,
+                        on_progress=lambda i, n: jobs.put(("gif-progress", i, n)),
+                    )
+                    jobs.put(("gif-done", path))
+                except Exception as exc:
+                    jobs.put(("gif-error", str(exc)))
+
+            self._executor.submit(work)
 
         def apply_rectangle(start: tuple[int, int], end: tuple[int, int]) -> None:
             width, height = canvas.winfo_width(), canvas.winfo_height()
@@ -422,12 +527,15 @@ class ArnoldViewer:
         ttk.Button(panel, text="Render", command=draw).pack(side=tk.LEFT, padx=3)
         ttk.Button(panel, text="Reset", command=reset).pack(side=tk.LEFT)
         ttk.Button(panel, text="Export HD", command=export).pack(side=tk.LEFT, padx=3)
+        gif_button = ttk.Button(panel, text="Export GIF", command=export_gif)
+        gif_button.pack(side=tk.LEFT, padx=3)
         presets = ttk.Frame(window, padding=(6, 0, 6, 5))
         presets.pack(fill=tk.X, before=canvas)
         for name in ("Overview", "Fine structure", "High coupling"):
             ttk.Button(presets, text=name, command=lambda n=name: preset(n)).pack(
                 side=tk.LEFT, padx=3
             )
+        canvas.bind("<Configure>", on_canvas_resize)
         canvas.bind("<ButtonPress-1>", mouse_down)
         canvas.bind("<B1-Motion>", mouse_move)
         canvas.bind("<ButtonRelease-1>", mouse_up)
@@ -435,6 +543,8 @@ class ArnoldViewer:
         def close() -> None:
             closed[0] = True
             generation[0] += 1
+            if resize_job[0] is not None:
+                window.after_cancel(resize_job[0])
             window.destroy()
 
         window.protocol("WM_DELETE_WINDOW", close)

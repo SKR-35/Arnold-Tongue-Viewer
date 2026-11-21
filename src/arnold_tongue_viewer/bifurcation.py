@@ -6,7 +6,8 @@ For a fixed omega, each coupling column plots post-transient orbit samples.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 
 import numpy as np
 from PIL import Image
@@ -96,3 +97,62 @@ def save_bifurcation(
     path: str, width: int, height: int, options: BifurcationOptions, *, family: str = "Sine"
 ) -> None:
     Image.fromarray(render_bifurcation(width, height, options, family=family)).save(path)
+
+
+@dataclass(frozen=True)
+class BifurcationAnimationOptions:
+    """Sweep omega over a closed interval and export a GIF."""
+
+    omega_start: float = 0.20
+    omega_end: float = 0.50
+    frames: int = 24
+    duration_ms: int = 100
+    width: int = 640
+    height: int = 440
+
+    def __post_init__(self) -> None:
+        if not np.isfinite((self.omega_start, self.omega_end)).all():
+            raise ValueError("Omega endpoints must be finite")
+        if not 2 <= self.frames <= 120:
+            raise ValueError("Frame count must be between 2 and 120")
+        if not 30 <= self.duration_ms <= 5000:
+            raise ValueError("Frame duration must be between 30 and 5000 ms")
+        if not (64 <= self.width <= 1920 and 64 <= self.height <= 1080):
+            raise ValueError("GIF dimensions must be between 64 and 1920x1080")
+
+
+def bifurcation_omega_frames(options: BifurcationAnimationOptions) -> np.ndarray:
+    """Deterministic omega trajectory including both endpoints."""
+    return np.linspace(options.omega_start, options.omega_end, options.frames)
+
+
+def save_bifurcation_gif(
+    destination: str,
+    options: BifurcationOptions,
+    animation: BifurcationAnimationOptions,
+    *,
+    family: str = "Sine",
+    palette: str = "Classic",
+    on_progress: Callable[[int, int], None] | None = None,
+) -> None:
+    """Render true parameter-sweep frames; never stretch the preview."""
+    frames: list[Image.Image] = []
+    for index, omega in enumerate(bifurcation_omega_frames(animation), start=1):
+        rgb = render_bifurcation(
+            animation.width,
+            animation.height,
+            replace(options, omega=float(omega)),
+            family=family,
+            palette=palette,
+        )
+        frames.append(Image.fromarray(rgb).quantize(colors=256))
+        if on_progress is not None:
+            on_progress(index, animation.frames)
+    frames[0].save(
+        destination,
+        save_all=True,
+        append_images=frames[1:],
+        duration=animation.duration_ms,
+        loop=0,
+        optimize=False,
+    )
